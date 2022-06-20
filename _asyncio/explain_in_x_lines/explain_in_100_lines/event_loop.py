@@ -1,15 +1,24 @@
 import collections
+import errno
 import heapq
 # селекторы - высокоуровневая облочка для мультиплексирования
 import selectors
 import socket
 import time
 
+from consts import KB
+
 
 class Context:
     """Context class is an execution context, providing a placeholder for
      the event loop reference"""
     _event_loop = None
+
+    class state:
+        INITIAL = 0
+        CONNECTING = 1
+        CONNECTED = 2
+        CLOSED = 3
 
     @classmethod
     def set_event_loop(cls, event_loop):
@@ -32,25 +41,101 @@ class _socket(Context):
         self._sock = socket.socket(*args)
         self._sock.setblocking(False)
         self.evloop.register_fileobj(self._sock, self._on_event)
-        ...
+
+        self._state = self.state.INITIAL
         self._callbacks = {}
 
-    def _on_event(self, *args):
+    def _on_event(self, mask):
         """run a callback from self._callbaks if exists"""
+        if self._state == self.state.CONNECTING:
+            assert mask == selectors.EVENT_WRITE
+            callback = self._callbacks.pop('conn')  # ~?ready
+            error = self._get_sock_error()
+            if error:
+                self.close()
+            else:
+                self._state = self.state.CONNECTED
+            callback(error)
+
+        if mask & selectors.EVENT_READ:
+            callback = self._callbacks.get('recv')
+            if callback:
+                del self._callbacks['recv']
+                error = self._get_sock_error()
+                callback(error)
+
+        if mask & selectors.EVENT_WRITE:
+            callback = self._callbacks.get('sent')
+            if callback:
+                del self._callbacks['sent']
+                error = self._get_sock_error()
+                callback(error)
+
+    def _get_sock_error(self):
+        # Флаги могут существовать на нескольких уровнях протоколов; они всегда присутствуют на самом верхнем из них.
+        # При манипулировании флагами сокета должен быть указан уровень, на котором находится этот флаг, и имя этого
+        # флага. Для манипуляции флагами на уровне сокета level задается как SOL_SOCKET. Для манипуляции флагами на
+        # любом другом уровне этим функциям передается номер соответствующего протокола, управляющего флагами.
+        # Например, для указания, что флаг должен интерпретироваться протоколом TCP, в параметре level должен
+        # передаваться номер протокола TCP;
+        # В случае успеха возвращается ноль.При ошибке возвращается - 1, а значение errno устанавливается должным
+        # образом.
+        error = self._sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+        if error:
+            return IOError('connection failed', error, errno.errorcode[error])
 
     def connect(self, addr, callback):
-        """
+        """"""
+        assert self._state == self.state.INITIAL, 'Socket state is not INITIAL'
+        self._state = self.state.CONNECTING
         self._callbacks['on_conn'] = callback
-        self._sock.connect(addr)"""
+        err = self._sock.connect_ex(addr)
+        assert errno.errorcode[err] == 'EINPROGRESS'
 
     def recv(self, n, callback):
-        """self._callbacks['on_read_ready'] = callback"""
+        """"""
+        assert self._state == self.state.CONNECTED
+        assert 'recv' not in self._callbacks
+
+        def _on_read_ready(err):
+            if err:
+                return callback(err)
+            data = self._sock.recv(n)
+            callback(None, data)
+
+        self._callbacks['on_read_ready'] = _on_read_ready
+
+    def sendall(self, data, callback):
+        assert self._state == self.state.CONNECTED
+        assert 'sent' not in self._callbacks
+
+        def _on_write_ready(err):
+            nonlocal data
+            if err:
+                return callback(err)
+
+            n = self._sock.send(data)
+            if n < len(data):
+                data = data[n:]
+                self._callbacks['sent'] = _on_write_ready
+            else:
+                callback(None)
+
+        self._callbacks['sent'] = _on_write_ready
+
+    def close(self):
+        self.evloop.unregister_fileobj(self._sock)
+        self._callbacks.clear()
+        self._state = self.state.CLOSED
+        self._sock.close()
 
 
 class set_timer(Context):
     """Convenience method to call event_loop.set_timer() without knowing about
      the current event loop variable
      регистрирует callback с задержкой в event loop
+
+     duration - in ms
      """
     def __init__(self, duration, callback):
         self.evloop.set_timer(duration, callback)
@@ -73,6 +158,7 @@ class EventLoop:
     def _execute(self, callback, *args):
         self._time = hrtime()
         try:
+            # "корень" стека
             callback(*args)
         except Exception as err:
             print('Uncaught exception:', err)
@@ -93,6 +179,7 @@ class EventLoop:
 
 
 def hrtime():
+    """return time in ms"""
     # походу 10e6 - разрешение таймера
     return int(time.time() * 10e6)
 
@@ -172,7 +259,6 @@ class Queue:
         self._selector.close()
 
 
-
 def main():
     # регистрируем event_loop._queue.register_fileobj(_socket, _socket.callbacks[...])
     sock = _socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -193,7 +279,7 @@ def main():
                         raise err
                     print(data)
 
-                sock.recv(1024, on_read)
+                sock.recv(KB, on_read)
 
             sock.sendall(b'foobar', on_sent)  #?
         # Регистрируем on_conn в _socket
