@@ -20,6 +20,7 @@ class Client:
         self._get(f'GET account {account_id}\n', callback)
 
     def _get(self, req, callback):  # request?
+        # регистрируем event_loop._queue.register_fileobj(_socket, _socket.callbacks[...])
         sock = _socket(socket.AF_INET, socket.SOCK_STREAM)
 
         def _on_conn(error):
@@ -32,15 +33,19 @@ class Client:
                     return callback(error)
 
                 def _on_resp(error, resp=None):
-                    sock.close()
+                    sock.close()  #?
                     if error:
                         return callback(error)
                     callback(None, json.loads(resp))
 
                 sock.recv(KB, _on_resp)
 
-            sock.sendall(req.encode('utf-8'), _on_sent)
-
+            sock.sendall(req.encode('utf-8'), _on_sent)  #?
+        # Регистрируем on_conn в _socket
+        # и _sock.connect() должен быть запущен
+        # начиная с этого момента и до завершения процедуры подключения - нам
+        # нечего делать в скрипте -> event loop должен обрабатывать эту приостановку(?)
+        # пробрасывает это в
         sock.connect(self.addr, _on_conn)
 
 
@@ -62,7 +67,7 @@ def get_user_balance(serv_addr, user_id, done):
                 raise Exception('Do not throw from callbacks')
 
         client.get_user(user_id, on_user)
-
+    # is event_loop._queue.regiter_timer(hrtime() + rand, on_timer)
     set_timer(random.randint(0, 10e6), on_timer)
 
 

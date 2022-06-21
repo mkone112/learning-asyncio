@@ -1,4 +1,6 @@
 import collections
+import sys
+
 import errno
 import heapq
 # селекторы - высокоуровневая облочка для мультиплексирования
@@ -88,7 +90,7 @@ class _socket(Context):
         """"""
         assert self._state == self.state.INITIAL, 'Socket state is not INITIAL'
         self._state = self.state.CONNECTING
-        self._callbacks['on_conn'] = callback
+        self._callbacks['conn'] = callback
         err = self._sock.connect_ex(addr)
         assert errno.errorcode[err] == 'EINPROGRESS'
 
@@ -175,7 +177,7 @@ class EventLoop:
     def set_timer(self, duration, callback):
         self._time = hrtime()
         # на данный момент lambda излишня
-        self._queue.register_timer(self._time + duration, lambda _: callback())
+        self._queue.register_timer(self._time + duration, callback)
 
 
 def hrtime():
@@ -220,9 +222,10 @@ class Queue:
             return self._ready.popleft()
 
         timeout = self.get_timeout(tick)
+
         # при операциях на зареганых сокетах - возникает event соответствующей
         # маской и данными
-        events = self._selector.select(timeout)
+        events = self.select(timeout)
         for key, mask in events:
             callback = key.data
             self._ready.append((callback,  mask))
@@ -238,7 +241,13 @@ class Queue:
             self._ready.append((callback, None))
 
         return self._ready.popleft()
-
+    def select(self, timeout):
+        try:
+            events = self._selector.select(timeout)
+        except OSError:
+            time.sleep(timeout)
+            events = []
+        return events
     def register_timer(self, tick, callback):
         timer = (tick, self._timer_no, callback)
         heapq.heappush(self._timers, timer)
@@ -255,44 +264,41 @@ class Queue:
         # Это возвращает связанный экземпляр SelectorKey или вызывает KeyError, если fileobj не зарегистрирован.
         self._selector.unregister(fileobj)
 
+    # def select(self):
+
     def close(self):
         self._selector.close()
 
 
-def main():
-    # регистрируем event_loop._queue.register_fileobj(_socket, _socket.callbacks[...])
-    sock = _socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    def on_timer():
-        def on_conn(err):
-            if err:
-                raise err
-
-            def on_sent(err):
-                if err:
-                    sock.close()  #?
-                    raise err
-
-                def on_read(err, data=None):
-                    sock.close()  #?
-                    if err:
-                        raise err
-                    print(data)
-
-                sock.recv(KB, on_read)
-
-            sock.sendall(b'foobar', on_sent)  #?
-        # Регистрируем on_conn в _socket
-        # и _sock.connect() должен быть запущен
-        # начиная с этого момента и до завершения процедуры подключения - нам
-        # нечего делать в скрипте -> event loop должен обрабатывать эту приостановку(?)
-        # пробрасывает это в
-        sock.connect(('127.0.0.1', 53210), on_conn)
-
-    # is event_loop._queue.regiter_timer(hrtime() + 1000, on_timer)
-    set_timer(1000, on_timer)
+# def main():
+#     # регистрируем event_loop._queue.register_fileobj(_socket, _socket.callbacks[...])
+#     sock = _socket(socket.AF_INET, socket.SOCK_STREAM)
+#
+#     def on_timer():
+#         def on_conn(err):
+#             if err:
+#                 raise err
+#
+#             def on_sent(err):
+#                 if err:
+#                     sock.close()  #?
+#                     raise err
+#
+#                 def on_read(err, data=None):
+#                     sock.close()  #?
+#                     if err:
+#                         raise err
+#                     print(data)
+#
+#                 sock.recv(KB, on_read)
+#
+#             sock.sendall(b'foobar', on_sent)  #?
+#
+#         sock.connect(('127.0.0.1', 53210), on_conn)
+#
+#     set_timer(1000, on_timer)
 
 
-event_loop = EventLoop()
-Context.set_event_loop(event_loop)  # instance?
-event_loop.run(main)
+# event_loop = EventLoop()
+# Context.set_event_loop(event_loop)  # instance?
+# event_loop.run(main)
