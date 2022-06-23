@@ -119,7 +119,7 @@ class IOError(Exception):
         self.errorcode = errorcode
 
     def __str__(self):
-        return super().__str__() + ' (error ' + str(self.errorno) + str(self.errorcode)
+        return super().__str__() + f' (error {self.errorno} {self.errorcode})'
 
 
 def hrtime():
@@ -146,15 +146,15 @@ class socket(Context):
         self._callbacks = {}
 
     def connect(self, addr, callback):
-        assert self._state == 0, 'state {} expected, but is {}'.format(0, self._state)
+        assert self._state == 0, 'state {} expected, but is {}'.format(self._state, self._state)
         self._state = 1
         self._callbacks['conn'] = callback
         err = self._sock.connect_ex(addr)
-        assert errno.errorcode[err] == 'EINPROGRESS'
+        assert errno.errorcode[err] == 'EINPROGRESS', 'error code is not EINPROGRESS'
 
     def recv(self, n, callback):
-        assert self._state == 2
-        assert 'recv' not in self._callbacks
+        assert self._state == 2, f'socket.recv(): self._state expected 2 but actual is {self._state}'
+        assert 'recv' not in self._callbacks, 'socket.recv(): recv in self._callbacks'
 
         def _on_read_ready(err):
             if err:
@@ -165,11 +165,8 @@ class socket(Context):
         self._callbacks['recv'] = _on_read_ready
 
     def sendall(self, data, callback):
-        if self._state != 2:
-            raise IOError('sendall(): _state 2 expected, but actual is {}'.format(self._state))
-
-        if 'sent' in self._callbacks:
-            raise IOError("sendall(): 'sent' should not be in self._callbacks")
+        assert self._state == 2, f'socket.sendall(), self._state expected 2 but actual is {self._state}'
+        assert 'sent' not in self._callbacks, 'socket.sendall(), sent in self._callbacks'
 
         def _on_write_ready(err):
             nonlocal data
@@ -193,12 +190,7 @@ class socket(Context):
 
     def _on_event(self, mask):
         if self._state == 1:
-            if mask != selectors.EVENT_WRITE:
-                raise IOError(
-                    '_on_event(): mask {} expeted, but {} is actual'.format(
-                        selectors.EVENT_WRITE, mask
-                    )
-                )
+            assert mask == selectors.EVENT_WRITE, f'_on_event(): mask {selectors.EVENT_WRITE} expeted, but {mask} is actual'
             cb = self._callbacks.pop('conn')
             err = self._get_sock_error()
             if err:
