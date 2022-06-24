@@ -1,11 +1,9 @@
 import collections
 import errno
 import heapq
-import json
-import random
+# селекторы - высокоуровневая облочка для мультиплексирования
 import selectors
-import socket as _socket
-import sys
+import socket
 import time
 
 
@@ -101,13 +99,15 @@ class Queue:
 
 
 class Context:
+    """Context class is an execution context, providing a placeholder for
+     the event loop reference"""
     _event_loop = None
 
     @classmethod
     def set_event_loop(cls, event_loop):
         cls._event_loop = event_loop
 
-    @property
+    @property  # упростить?
     def evloop(self):
         return self._event_loop
 
@@ -133,9 +133,9 @@ class set_timer(Context):
         self.evloop.set_timer(duration, callback)
 
 
-class socket(Context):
+class async_socket(Context):
     def __init__(self, *args):
-        self._sock = _socket.socket(*args)
+        self._sock = socket.socket(*args)
         self._sock.setblocking(False)
         self.evloop.register_fileobj(self._sock, self._on_event)
         # 0 - initial
@@ -215,8 +215,8 @@ class socket(Context):
                 cb(err)
 
     def _get_sock_error(self):
-        err = self._sock.getsockopt(_socket.SOL_SOCKET,
-                                    _socket.SO_ERROR)
+        err = self._sock.getsockopt(socket.SOL_SOCKET,
+                                    socket.SO_ERROR)
         if not err:
             return None
         return IOError('connection failed',

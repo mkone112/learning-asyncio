@@ -1,5 +1,10 @@
-from _event_loop import _socket
-from _event_loop import *
+import json
+import random
+import socket
+import sys
+
+from _event_loop import Context, EventLoop, async_socket, set_timer
+# from consts import KB, serv_addr
 
 
 class Client:
@@ -7,27 +12,27 @@ class Client:
         self.addr = addr
 
     def get_user(self, user_id, callback):
-        self._get('GET user %s\n' % user_id, callback)
+        self._get(f'GET user {user_id}\n', callback)
 
     def get_balance(self, account_id, callback):
-        self._get('GET account %s\n' % account_id, callback)
+        self._get(f'GET account {account_id}\n', callback)
 
     def _get(self, req, callback):
-        sock = socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock = async_socket(socket.AF_INET, socket.SOCK_STREAM)
 
-        def _on_conn(err):
-            if err:
-                return callback(err)
+        def _on_conn(error):
+            if error:
+                return callback(error)
 
-            def _on_sent(err):
-                if err:
+            def _on_sent(error):
+                if error:
                     sock.close()
-                    return callback(err)
+                    return callback(error)
 
-                def _on_resp(err, resp=None):
+                def _on_resp(error, resp=None):
                     sock.close()
-                    if err:
-                        return callback(err)
+                    if error:
+                        return callback(error)
                     callback(None, json.loads(resp.decode()))
 
                 sock.recv(1024, _on_resp)
@@ -46,10 +51,10 @@ def get_user_balance(serv_addr, user_id, done):
             if err:
                 return done(err)
 
-            def on_account(err, acc=None):
-                if err:
-                    return done(err)
-                done(None, 'User %s has %s USD' % (user['name'], acc['balance']))
+            def on_account(error, acc=None):
+                if error:
+                    return done(error)
+                done(None, 'User {} has {} USD'.format(user['name'], acc['balance']))
 
             if user_id % 5 == 0:
                 raise Exception('Do not throw from callbacks')
@@ -61,11 +66,11 @@ def get_user_balance(serv_addr, user_id, done):
 
 
 def main(serv_addr):
-    def on_balance(err, balance=None):
-        if err:
-            print('ERROR', err)
+    def on_balance(error, balance=None):
+        if error:
+            print(f'ERROR: {error}')
         else:
-            print(balance)
+            print(balance)  # подробнее?
 
     for i in range(10):
         get_user_balance(serv_addr, i, on_balance)
