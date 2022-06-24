@@ -1,10 +1,9 @@
-# python3
-# file: server.py
 import json
 import random
-import sys
 from socketserver import BaseRequestHandler, TCPServer
 from uuid import uuid4
+
+from consts import KB, serv_addr
 
 
 class Handler(BaseRequestHandler):
@@ -13,7 +12,7 @@ class Handler(BaseRequestHandler):
 
     def handle(self):
         client = f'client {self.client_address}'
-        req = self.request.recv(1024)
+        req = self.request.recv(KB)
         if not req:
             print(f'{client} unexpectedly disconnected')
             return
@@ -48,7 +47,6 @@ class Handler(BaseRequestHandler):
         if entity_kind == 'account':
             account = self.accounts[entity_id]
             self.send(account)
-            return
 
     def send(self, data):
         resp = json.dumps(data).encode('utf8')
@@ -57,6 +55,5 @@ class Handler(BaseRequestHandler):
 
 
 if __name__ == '__main__':
-    port = int(sys.argv[1])
-    with TCPServer(('127.0.0.1', port), Handler) as server:
+    with TCPServer(serv_addr, Handler) as server:
         server.serve_forever()

@@ -1,10 +1,9 @@
 import json
 import random
 import socket
-import sys
 
-from _event_loop import Context, EventLoop, async_socket, set_timer
-# from consts import KB, serv_addr
+from event_loop import Context, EventLoop, async_socket, set_timer
+from consts import KB, serv_addr
 
 
 class Client:
@@ -17,7 +16,8 @@ class Client:
     def get_balance(self, account_id, callback):
         self._get(f'GET account {account_id}\n', callback)
 
-    def _get(self, req, callback):
+    def _get(self, req, callback): # request?
+        # регистрируем event_loop._queue.register_fileobj(_socket, _socket.callbacks[...])
         sock = async_socket(socket.AF_INET, socket.SOCK_STREAM)
 
         def _on_conn(error):
@@ -30,15 +30,19 @@ class Client:
                     return callback(error)
 
                 def _on_resp(error, resp=None):
-                    sock.close()
+                    sock.close()  #?
                     if error:
                         return callback(error)
                     callback(None, json.loads(resp.decode()))
 
-                sock.recv(1024, _on_resp)
+                sock.recv(KB, _on_resp)
 
             sock.sendall(req.encode('utf8'), _on_sent)
-
+        # Регистрируем on_conn в _socket
+        # и _sock.connect() должен быть запущен
+        # начиная с этого момента и до завершения процедуры подключения - нам
+        # нечего делать в скрипте -> event loop должен обрабатывать эту приостановку(?)
+        # пробрасывает это в
         sock.connect(self.addr, _on_conn)
 
 
@@ -61,7 +65,7 @@ def get_user_balance(serv_addr, user_id, done):
             client.get_balance(user['account_id'], on_account)
 
         client.get_user(user_id, on_user)
-
+    # is event_loop._queue.regiter_timer(hrtime() + rand, on_timer)
     set_timer(random.randint(0, 10e6), on_timer)
 
 
@@ -80,5 +84,4 @@ if __name__ == '__main__':
     event_loop = EventLoop()
     Context.set_event_loop(event_loop)
 
-    serv_addr = ('127.0.0.1', int(sys.argv[1]))
     event_loop.run(main, serv_addr)
