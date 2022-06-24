@@ -30,14 +30,14 @@ class EventLoop:
     def set_timer(self, duration, callback):
         self._time = hrtime()
         self._queue.register_timer(self._time + duration,
-                                   lambda _: callback())
+                                   lambda _: callback())  # разобраться почему lambda нужна
 
     def _execute(self, callback, *args):
         self._time = hrtime()
         try:
             callback(*args)  # new callstack starts
-        except Exception as err:
-            print('Uncaught exception:', err)
+        except Exception as exc:
+            print('Uncaught exception:', exc)
         self._time = hrtime()
 
 
@@ -103,6 +103,12 @@ class Context:
      the event loop reference"""
     _event_loop = None
 
+    class state:  # noqa
+        INITIAL = 0
+        CONNECTING = 1
+        CONNECTED = 2
+        CLOSED = 3
+
     @classmethod
     def set_event_loop(cls, event_loop):
         cls._event_loop = event_loop
@@ -138,24 +144,25 @@ class async_socket(Context):
         self._sock = socket.socket(*args)
         self._sock.setblocking(False)
         self.evloop.register_fileobj(self._sock, self._on_event)
-        # 0 - initial
-        # 1 - connecting
-        # 2 - connected
-        # 3 - closed
-        self._state = 0
+
+        self._state = self.state.INITIAL
         self._callbacks = {}
 
     def connect(self, addr, callback):
-        assert self._state == 0, 'state {} expected, but is {}'.format(self._state, self._state)
-        self._state = 1
+        assert self._state == self.state.INITIAL, f'state {self.state.INITIAL} expected, but is {self._state}'
+        self._state = self.state.CONNECTING
         self._callbacks['conn'] = callback
+        #?
         err = self._sock.connect_ex(addr)
         # establishing connection not in progess
         assert errno.errorcode[err] == 'EINPROGRESS', 'error code is not EINPROGRESS'
 
     def recv(self, n, callback):
-        assert self._state == 2, f'socket.recv(): self._state expected 2 but actual is {self._state}'
-        assert 'recv' not in self._callbacks, 'socket.recv(): recv in self._callbacks'
+        if self._state != 2:
+            Exception(f'socket.recv(): self._state expected 2 but actual is {self._state}')
+
+        if 'recv' in self._callbacks:
+            Exception('socket.recv(): recv in self._callbacks')
 
         def _on_read_ready(err):
             if err:
@@ -166,13 +173,16 @@ class async_socket(Context):
         self._callbacks['recv'] = _on_read_ready
 
     def sendall(self, data, callback):
-        assert self._state == 2, f'socket.sendall(), self._state expected 2 but actual is {self._state}'
-        assert 'sent' not in self._callbacks, 'socket.sendall(), sent in self._callbacks'
+        if self._state != 2:
+            raise Exception(f'socket.sendall(), self._state expected 2 but actual is {self._state}')
 
-        def _on_write_ready(err):
+        if 'sent' in self._callbacks:
+            raise Exception('socket.sendall(), sent in self._callbacks')
+
+        def _on_write_ready(error):
             nonlocal data
-            if err:
-                return callback(err)
+            if error:
+                return callback(error)
 
             n = self._sock.send(data)
             if n < len(data):
@@ -186,33 +196,34 @@ class async_socket(Context):
     def close(self):
         self.evloop.unregister_fileobj(self._sock)
         self._callbacks.clear()
-        self._state = 3
+        self._state = self.state.CLOSED
         self._sock.close()
 
     def _on_event(self, mask):
-        if self._state == 1:
-            assert mask == selectors.EVENT_WRITE, f'_on_event(): mask {selectors.EVENT_WRITE} expeted, but {mask} is actual'
+        if self._state == self.state.CONNECTING:
+            if mask != selectors.EVENT_WRITE:
+                raise Exception(f'_on_event(): mask {selectors.EVENT_WRITE} expeted, but {mask} is actual')
             cb = self._callbacks.pop('conn')
-            err = self._get_sock_error()
-            if err:
+            error = self._get_sock_error()
+            if error:
                 self.close()
             else:
                 self._state = 2
-            cb(err)
+            cb(error)
 
         if mask & selectors.EVENT_READ:
             cb = self._callbacks.get('recv')
             if cb:
                 del self._callbacks['recv']
-                err = self._get_sock_error()
-                cb(err)
+                error = self._get_sock_error()
+                cb(error)
 
         if mask & selectors.EVENT_WRITE:
             cb = self._callbacks.get('sent')
             if cb:
                 del self._callbacks['sent']
-                err = self._get_sock_error()
-                cb(err)
+                error = self._get_sock_error()
+                cb(error)
 
     def _get_sock_error(self):
         err = self._sock.getsockopt(socket.SOL_SOCKET,
