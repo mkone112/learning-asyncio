@@ -150,6 +150,7 @@ class socket(Context):
         self._state = 1
         self._callbacks['conn'] = callback
         err = self._sock.connect_ex(addr)
+        # establishing connection not in progess
         assert errno.errorcode[err] == 'EINPROGRESS', 'error code is not EINPROGRESS'
 
     def recv(self, n, callback):
